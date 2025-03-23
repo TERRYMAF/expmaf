@@ -134,30 +134,8 @@ def capture_image(key):
     if 'captured_images' in st.session_state:
         previous_count = len(st.session_state.captured_images)
     
-    # File uploader option
-    st.write("Option 1: Upload an image from your device")
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"], key=f"uploader_{key}")
-    
-    if uploaded_file is not None:
-        # Convert to OpenCV format
-        bytes_data = uploaded_file.getvalue()
-        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        
-        st.image(img, channels="BGR", caption="Uploaded Image", use_column_width=True)
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("Add to collection", key=f"add_uploaded_{key}"):
-                if 'captured_images' in st.session_state and len(st.session_state.captured_images) < 5:
-                    st.session_state.captured_images.append(img)
-                    st.session_state.captured_image_files.append(uploaded_file)
-                    st.success(f"Image added! ({len(st.session_state.captured_images)}/5)")
-                    st.rerun()
-        return img, uploaded_file
-    
-    # Camera option
-    st.write("Option 2: Take a picture with your camera")
-    img_file_buffer = st.camera_input(f"Take picture", key=f"camera_{key}")
+    # Camera capture
+    img_file_buffer = st.camera_input(f"Take a picture of the expiry date", key=f"camera_{key}")
     
     if img_file_buffer is not None:
         # Convert to OpenCV format
