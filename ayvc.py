@@ -146,15 +146,22 @@ def get_secret(key, default=None):
 
 def analyze_image(image_file):
     """Analyze image using Vision API"""
+    st.write("API Step 1: Starting image encoding...")
+    
     base64_image = encode_image_to_base64(image_file)
     if not base64_image:
         st.error("Error encoding image")
         return None
     
+    st.write("API Step 2: Image encoded successfully.")
+    
     # Get API configuration from secrets
     endpoint = get_secret("azure_endpoint")
     api_key = get_secret("azure_api_key")
     model = get_secret("azure_model")
+    
+    # Show config status (without revealing sensitive info)
+    st.write(f"API Step 3: Checking configuration - Endpoint: {'Present' if endpoint else 'Missing'}, API Key: {'Present' if api_key else 'Missing'}, Model: {'Present' if model else 'Missing'}")
     
     # Check if required settings are available
     if not endpoint or not api_key or not model:
@@ -178,6 +185,8 @@ def analyze_image(image_file):
     # Get prompt
     prompt = get_prompt()
     
+    st.write("API Step 4: Preparing API request...")
+    
     # Prepare payload
     payload = {
         "messages": [
@@ -192,28 +201,40 @@ def analyze_image(image_file):
     }
     
     try:
+        st.write("API Step 5: Sending API request...")
+        
         # Make the API call
         response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+        
+        st.write(f"API Step 6: Response received. Status code: {response.status_code}")
         
         # Check for HTTP errors
         if response.status_code != 200:
             st.error(f"API Error: {response.status_code}")
+            if response.text:
+                st.write(f"Error details: {response.text[:200]}...")
             return None
         
         # Parse the response
         result = response.json()
         
+        st.write(f"API Step 7: Response parsed. Keys: {', '.join(result.keys())}")
+        
         # Extract the content from the response
         if "choices" in result and len(result["choices"]) > 0:
             content = result["choices"][0].get("message", {}).get("content", "{}")
             
+            st.write(f"API Step 8: Content extracted. First 50 chars: {content[:50]}...")
+            
             # Try to parse the content as JSON
             try:
                 parsed_result = json.loads(content)
+                st.write("API Step 9: JSON parsing successful.")
                 return parsed_result
             
-            except json.JSONDecodeError:
-                st.error("Could not parse the API response")
+            except json.JSONDecodeError as e:
+                st.error(f"Could not parse the API response as JSON: {str(e)}")
+                st.write(f"Raw content received: {content[:200]}...")
                 return None
         
         st.error("Unexpected API response format")
@@ -229,13 +250,20 @@ def process_image():
         st.error("No image available to process")
         return
     
+    st.write("Step 1: Starting image analysis...")
+    
     with st.spinner("Analyzing image..."):
         # Process the image with the vision API
         result = analyze_image(st.session_state.current_image_file)
         
+        st.write("Step 2: Analysis completed. Result:", "Success" if result else "Failed")
+        
         if result:
             st.session_state.analysis_result = result
             st.session_state.image_processed = True
+            st.write("Step 3: Results stored in session state.")
+        else:
+            st.error("Failed to analyze the image. Please check your API configuration or try a different image.")
 
 def display_date_card(date_info):
     """Display a single date card with appropriate styling"""
@@ -303,21 +331,40 @@ def display_results():
 
 # Main app flow
 def main():
+    # Add a debug section at the top
+    with st.expander("Debug Information (click to expand)"):
+        st.write("Current session state:")
+        st.write(f"- Image captured: {'Yes' if st.session_state.current_image is not None else 'No'}")
+        st.write(f"- Image processed: {'Yes' if st.session_state.image_processed else 'No'}")
+        st.write(f"- Analysis results: {'Available' if st.session_state.analysis_result else 'None'}")
+        
+        if st.button("Reset App"):
+            st.session_state.current_image = None
+            st.session_state.current_image_file = None
+            st.session_state.image_processed = False
+            st.session_state.analysis_result = None
+            st.rerun()
+    
     # If we have results, show them
     if st.session_state.image_processed and st.session_state.analysis_result:
+        st.write("Debug: Displaying results")
         display_results()
     # Otherwise show image capture interface
     else:
         # If we already have an image, show it and the analyze button
         if st.session_state.current_image is not None:
+            st.write("Debug: Displaying captured image")
             display_current_image()
             
             # Analyze button
             if st.button("Analyze Expiry Date", type="primary", use_container_width=True):
+                st.write("Debug: Analyze button clicked")
                 process_image()
+                st.write("Debug: Processing complete, rerunning app")
                 st.rerun()
         # Otherwise show the camera capture
         else:
+            st.write("Debug: Showing camera capture interface")
             capture_image()
 
 if __name__ == "__main__":
