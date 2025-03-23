@@ -56,7 +56,7 @@ def get_prompt(product_type):
         Analyze this image and identify any expiry dates on {PRODUCT_CONFIG[product_type]['name']}.
         
         IMPORTANT: 
-        1. Differentiate between expiry dates and production/manufacturing dates image might have arabic and english dates stick with english
+        1. Differentiate between expiry dates and production/manufacturing dates.
         2. Expiry dates typically come AFTER production dates and are often preceded by symbols like:
            - "E" or "EXP" or "Expiry" or "Best Before" or "Use By" or "BB"
            - Sometimes format: "E: 01/2025" or "EXP: 01/2025"
@@ -83,20 +83,8 @@ def get_prompt(product_type):
     """
     return base_prompt
 
-def create_test_image():
-    """Create a test image with expiry date text for demo purposes"""
-    test_img = np.ones((300, 400, 3), dtype=np.uint8) * 255  # White background
-    
-    # Add some text to simulate expiry dates
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(test_img, "EXP: 01/2026", (50, 50), font, 0.7, (0, 0, 0), 2)
-    cv2.putText(test_img, "MFG: 01/2024", (50, 100), font, 0.7, (0, 0, 0), 2)
-    cv2.putText(test_img, "Best Before: 31/12/2025", (50, 150), font, 0.7, (0, 0, 0), 2)
-    
-    return test_img
-
 def capture_image():
-    """Capture or generate a test image"""
+    """Capture an image"""
     # Camera troubleshooting expander
     with st.expander("Camera not working? Click here for help"):
         st.markdown("""
@@ -113,25 +101,6 @@ def capture_image():
     # Camera capture with instructions
     st.info("📸 Position the expiry date clearly in the frame. Make sure there's good lighting.")
     img_file_buffer = st.camera_input("Take a picture")
-    
-    # Test image fallback
-    st.markdown("---")
-    st.write("Or use a test image:")
-    
-    if st.button("Use Test Image"):
-        # Create a test image
-        test_img = create_test_image()
-        
-        # Convert to bytes for session state
-        _, buffer = cv2.imencode(".jpg", test_img)
-        io_buf = BytesIO(buffer)
-        
-        # Store image in session state
-        st.session_state.current_image = test_img
-        st.session_state.current_image_file = io_buf
-        st.session_state.image_processed = False
-        st.session_state.analysis_result = None
-        st.rerun()
     
     # Process camera image if available
     if img_file_buffer is not None:
@@ -180,78 +149,61 @@ def display_current_image():
             st.session_state.analysis_result = None
             st.rerun()
 
+def encode_image_to_base64(image_file):
+    """Encode image to base64 string from file buffer"""
+    try:
+        if isinstance(image_file, BytesIO):
+            return base64.b64encode(image_file.getvalue()).decode('utf-8')
+        return base64.b64encode(image_file).decode('utf-8')
+    except Exception as e:
+        st.error(f"Error encoding image: {str(e)}")
+        return None
+
+def get_secret(key, default=None):
+    """Get a value from streamlit secrets with a default fallback"""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
 def analyze_image(image_file, product_type):
-    """Analyze image using Vision API or generate mock results for testing"""
-    # For testing/demo purposes without API, generate results based on product type
-    current_date = datetime.now().date()
-    
-    # Create different mock responses based on product type
-    if product_type == "packaged_food":
-        exp_date = datetime(2025, 12, 31).date()
-        prod_date = datetime(2023, 1, 15).date()
-    elif product_type == "dairy":
-        exp_date = datetime(2023, 4, 15).date()
-        prod_date = datetime(2023, 1, 1).date()
-    elif product_type == "medicine":
-        exp_date = datetime(2026, 6, 30).date()
-        prod_date = datetime(2022, 6, 30).date()
-    else:  # cosmetics
-        exp_date = datetime(2027, 1, 1).date()
-        prod_date = datetime(2022, 1, 1).date()
-    
-    days_until_expiry = (exp_date - current_date).days
-    days_until_prod = (prod_date - current_date).days
-    
-    mock_result = {
-        "dates_found": 2,
-        "expiry_dates": [
-            {
-                "date_text": f"EXP: {exp_date.strftime('%d/%m/%Y')}",
-                "date_type": "expiry",
-                "standardized_date": exp_date.strftime("%Y-%m-%d"),
-                "days_until_expiry": days_until_expiry,
-                "expired": days_until_expiry < 0
-            },
-            {
-                "date_text": f"MFG: {prod_date.strftime('%d/%m/%Y')}",
-                "date_type": "production",
-                "standardized_date": prod_date.strftime("%Y-%m-%d"),
-                "days_until_expiry": days_until_prod,
-                "expired": days_until_prod < 0
-            }
-        ],
-        "detailed_analysis": f"The image shows a {product_type} package with both expiry and production dates visible."
-    }
-    
-    # In a real application, you would call the Vision API here
-    # This is commented out since it requires API keys and external service setup
-    """
-    # Real implementation would use API call here
+    """Analyze image using Vision API"""
     base64_image = encode_image_to_base64(image_file)
     if not base64_image:
+        st.error("Error encoding image")
         return None
     
+    # Get API configuration from secrets
     endpoint = get_secret("azure_endpoint")
     api_key = get_secret("azure_api_key")
     model = get_secret("azure_model")
-    api_version = get_secret("api_version", "2024-02-15-preview")
     
-    if not endpoint or not api_key:
-        st.error("Missing API configuration")
-        return mock_result  # Fall back to mock result
+    # Check if required settings are available
+    if not endpoint or not api_key or not model:
+        st.error("Missing API configuration. Please set up your secrets.toml file with azure_endpoint, azure_api_key, and azure_model.")
+        return None
     
-    api_url = f"{endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}"
+    # Ensure endpoint has the right format
+    if not endpoint.startswith(('http://', 'https://')):
+        endpoint = 'https://' + endpoint
+    endpoint = endpoint.rstrip('/')
     
+    # Construct API URL
+    api_url = f"{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview"
+    
+    # Prepare headers
     headers = {
         "Content-Type": "application/json",
         "api-key": api_key
     }
     
+    # Get product-specific prompt
     product_prompt = get_prompt(product_type)
     
+    # Prepare payload
     payload = {
         "messages": [
-            {"role": "system", "content": f"You are a computer vision assistant specialized in detecting expiry dates."},
+            {"role": "system", "content": f"You are a computer vision assistant specialized in detecting expiry dates on {PRODUCT_CONFIG[product_type]['name']}."},
             {"role": "user", "content": [
                 {"type": "text", "text": product_prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
@@ -262,43 +214,58 @@ def analyze_image(image_file, product_type):
     }
     
     try:
+        # Make the API call
         response = requests.post(api_url, headers=headers, json=payload, timeout=60)
         
+        # Check for HTTP errors
         if response.status_code != 200:
             st.error(f"API Error: {response.status_code}")
-            return mock_result  # Fall back to mock result
+            return None
         
+        # Parse the response
         result = response.json()
-        content = result["choices"][0].get("message", {}).get("content", "{}")
         
-        try:
-            parsed_result = json.loads(content)
+        # Extract the content from the response
+        if "choices" in result and len(result["choices"]) > 0:
+            content = result["choices"][0].get("message", {}).get("content", "{}")
             
-            # Process the dates
-            current_date = datetime.now().date()
+            # Try to parse the content as JSON
+            try:
+                parsed_result = json.loads(content)
+                
+                # Process the dates - standardize format and calculate days until expiry
+                current_date = datetime.now().date()
+                
+                if "expiry_dates" in parsed_result:
+                    for date_info in parsed_result["expiry_dates"]:
+                        if "standardized_date" in date_info:
+                            try:
+                                # Parse the standardized date
+                                expiry_date = datetime.strptime(date_info["standardized_date"], "%Y-%m-%d").date()
+                                
+                                # Calculate days until expiry
+                                days_until = (expiry_date - current_date).days
+                                date_info["days_until_expiry"] = days_until
+                                
+                                # Set expired flag
+                                date_info["expired"] = days_until < 0
+                            except Exception as e:
+                                # Skip problematic dates
+                                date_info["days_until_expiry"] = 0
+                                date_info["expired"] = False
+                
+                return parsed_result
             
-            if "expiry_dates" in parsed_result:
-                for date_info in parsed_result["expiry_dates"]:
-                    if "standardized_date" in date_info:
-                        try:
-                            expiry_date = datetime.strptime(date_info["standardized_date"], "%Y-%m-%d").date()
-                            days_until = (expiry_date - current_date).days
-                            date_info["days_until_expiry"] = days_until
-                            date_info["expired"] = days_until < 0
-                        except Exception:
-                            date_info["days_until_expiry"] = 0
-                            date_info["expired"] = False
-            
-            return parsed_result
-        except json.JSONDecodeError:
-            return mock_result  # Fall back to mock result
-            
-    except requests.exceptions.RequestException:
-        return mock_result  # Fall back to mock result
-    """
-    
-    # Return mock result for testing
-    return mock_result
+            except json.JSONDecodeError:
+                st.error("Could not parse the API response")
+                return None
+        
+        st.error("Unexpected API response format")
+        return None
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error in API request: {str(e)}")
+        return None
 
 def process_image():
     """Process the current image"""
@@ -307,12 +274,14 @@ def process_image():
         return
     
     with st.spinner("Analyzing image..."):
-        # Process the image 
+        # Process the image with the vision API
         result = analyze_image(st.session_state.current_image_file, st.session_state.product_selected)
         
         if result:
             st.session_state.analysis_result = result
             st.session_state.image_processed = True
+        else:
+            st.error("Failed to analyze the image. Please check your API configuration or try a different image.")
 
 def display_date_card(date_info):
     """Display a single date card with appropriate styling"""
