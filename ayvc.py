@@ -1,375 +1,4 @@
-def main():
-    # Set up session state
-    if 'product_selected' not in st.session_state:
-        st.session_state.product_selected = None
-    if 'analysis_results' not in st.session_state:
-        st.session_state.analysis_results = []
-    if 'captured_images' not in st.session_state:
-        st.session_state.captured_images = []
-        st.session_state.captured_image_files = []
-    if 'images_processed' not in st.session_state:
-        st.session_state.images_processed = False
-    
-    # If product is not selected, show product selection tiles
-    if st.session_state.product_selected is None:
-        st.subheader("Select product type")
-        
-        # Create a grid of product selection tiles
-        cols = st.columns(len(PRODUCT_CONFIG))
-        
-        for i, (product_id, product_data) in enumerate(PRODUCT_CONFIG.items()):
-            with cols[i]:
-                # Display product name as text
-                st.write(f"**{product_data['name']}**", unsafe_allow_html=True)
-                
-                # Create a clickable rounded button with just emoji
-                st.markdown(f"""
-                <div style="padding: 15px; text-align: center; border: 1px solid #ddd; 
-                     border-radius: 50px; cursor: pointer; width: 80px; height: 80px; 
-                     display: flex; align-items: center; justify-content: center;
-                     margin: 0 auto; background-color: #f8f9fa;" onclick="
-                    document.querySelector('#select_{product_id}').click()
-                ">
-                    <div style="font-size: 40px;">{product_data['emoji']}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Hidden button to handle the click
-                if st.button(f"Select {product_data['name']}", key=f"select_{product_id}", help=f"Analyze {product_data['name']}", label_visibility="collapsed"):
-                    st.session_state.product_selected = product_id
-                    st.rerun()
-    
-    # If product is selected, show the camera interface
-    else:
-        selected_product = st.session_state.product_selected
-        product_data = PRODUCT_CONFIG[selected_product]
-        
-        # Show product selection and back button
-        col1, col2 = st.columns([1, 5])
-        with col1:
-            if st.button("←", help="Back to product selection"):
-                st.session_state.product_selected = None
-                st.session_state.analysis_results = []
-                st.session_state.captured_images = []
-                st.session_state.captured_image_files = []
-                st.session_state.images_processed = False
-                st.rerun()
-        
-        with col2:
-            st.title(f"{product_data['emoji']} {product_data['name']} Expiry Detector")
-        
-        # Set up to handle 5 images
-        images = []
-        image_files = []
-        
-        # Initialize list in session state if not existing
-        if 'captured_images' not in st.session_state:
-            st.session_state.captured_images = []
-            st.session_state.captured_image_files = []
-        
-        # Container for the image collection
-        st.markdown(f"📷 Take pictures of expiry dates", style="font-size: 18px;")
-        
-        # Simple camera element
-        img, img_file = capture_image("main")
-        
-        # Display currently captured images
-        if len(st.session_state.captured_images) > 0:
-            # Display images in a simplified view
-            st.subheader("Captured Images")
-            
-            # Create a container with border
-            st.markdown("""
-            <style>
-            .image-gallery {
-                border: 1px solid #ddd;
-                border-radius: 10px;
-                padding: 10px;
-                background-color: #f8f9fa;
-                margin-bottom: 20px;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            st.markdown('<div class="image-gallery">', unsafe_allow_html=True)
-            
-            # Create a grid layout for images
-            num_images = len(st.session_state.captured_images)
-            cols_per_row = min(3, num_images)  # Up to 3 images per row
-            
-            if num_images > 0:
-                # Calculate number of rows needed
-                rows = (num_images + cols_per_row - 1) // cols_per_row
-                
-                for row in range(rows):
-                    # Create columns for this row
-                    cols = st.columns(cols_per_row)
-                    
-                    # Fill each column with an image
-                    for col in range(cols_per_row):
-                        idx = row * cols_per_row + col
-                        if idx < num_images:
-                            with cols[col]:
-                                st.image(st.session_state.captured_images[idx], channels="BGR", use_column_width=True)
-                                if st.button("❌", key=f"remove_{idx}", help="Remove this image"):
-                                    st.session_state.captured_images.pop(idx)
-                                    st.session_state.captured_image_files.pop(idx)
-                                    st.rerun()
-            else:
-                st.write("No images captured yet. Use the camera above to take pictures.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Single button to clear all
-            if num_images > 0:
-                if st.button("Clear All Images", type="secondary", use_container_width=True):
-                    st.session_state.captured_images = []
-                    st.session_state.captured_image_files = []
-                    st.rerun()
-                
-        # Use the session state images
-        images = st.session_state.captured_images
-        image_files = st.session_state.captured_image_files
-        
-        # Process button - simplified UI
-        if len(images) > 0:
-            st.button("Analyze Expiry Dates", type="primary", use_container_width=True, on_click=process_images)
-            
-        # Display results if images have been processed
-        if st.session_state.images_processed and len(st.session_state.analysis_results) > 0:
-            display_results()
-            
-def process_images():
-    """Process the captured images - moved to a function for cleaner code"""
-    st.session_state.analysis_results = []
-    
-    # Process each image
-    for idx, (img, img_file) in enumerate(zip(st.session_state.captured_images, st.session_state.captured_image_files)):
-        # Process the image using the API
-        results = analyze_image_with_vision_api(img_file, st.session_state.product_selected)
-        
-        if results:
-            # Store results
-            st.session_state.analysis_results.append(results)
-    
-    # Set a flag to show we've processed the images
-    st.session_state.images_processed = True
-    
-def display_results():
-    """Display the analysis results in a user-friendly format"""
-    st.header("📊 Analysis Results")
-    
-    # Process each image result
-    for idx, results in enumerate(st.session_state.analysis_results):
-        with st.expander(f"Image #{idx+1} Results", expanded=True):
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                st.image(st.session_state.captured_images[idx], channels="BGR", use_column_width=True)
-            
-            with col2:
-                if results.get("dates_found", 0) > 0 and "expiry_dates" in results:
-                    # Create a card-like container for each date
-                    for date_idx, date_info in enumerate(results["expiry_dates"]):
-                        # Extract date information
-                        original_date = date_info.get("date_text", "Unknown")
-                        date_type = date_info.get("date_type", "Unknown").upper()
-                        standardized_date = date_info.get("standardized_date", "Unknown")
-                        days_until = date_info.get("days_until_expiry", "Unknown")
-                        expired = date_info.get("expired", False)
-                        
-                        # Determine background color based on status
-                        if date_type.lower() == "production":
-                            bg_color = "#f0f0f0"  # Light gray for production dates
-                            status_text = "PRODUCTION DATE"
-                        elif expired:
-                            bg_color = "#ffcccc"  # Light red for expired
-                            status_text = "EXPIRED"
-                        elif days_until <= 7:
-                            bg_color = "#fff2cc"  # Light yellow for expiring soon
-                            status_text = "EXPIRING SOON"
-                        else:
-                            bg_color = "#d9f2d9"  # Light green for valid
-                            status_text = "VALID"
-                        
-                        # Display date card
-                        st.markdown(f"""
-                        <div style="background-color: {bg_color}; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
-                            <div style="display: flex; justify-content: space-between;">
-                                <span style="font-weight: bold;">{date_type}</span>
-                                <span style="font-weight: bold;">{status_text}</span>
-                            </div>
-                            <div style="font-size: 1.2em; margin: 5px 0;">{original_date}</div>
-                            <div>Standardized: {standardized_date}</div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Add days until expiry info if it's an expiry date
-                        if date_type.lower() == "expiry":
-                            if expired:
-                                st.markdown(f"""
-                                <div style="color: red;">Expired {abs(days_until)} days ago</div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"""
-                                <div>Days until expiry: {days_until}</div>
-                                """, unsafe_allow_html=True)
-                        
-                        # Close the div
-                        st.markdown("</div>", unsafe_allow_html=True)
-                else:
-                    st.warning("No dates detected in this image.")
-                
-                # Display PAO information for cosmetics if available
-                if st.session_state.product_selected == "cosmetics" and results.get("pao_found", False):
-                    pao_months = results.get("pao_months", "Unknown")
-                    st.info(f"📌 Period After Opening (PAO): {pao_months} months")
-    
-    # Show a summary of all results
-    if len(st.session_state.analysis_results) > 0:
-        st.header("📝 Summary")
-        
-        # Get all expiry dates
-        all_dates = []
-        for result in st.session_state.analysis_results:
-            if "expiry_dates" in result:
-                all_dates.extend(result["expiry_dates"])
-        
-        # Filter to just expiry dates (not production)
-        expiry_only = [date for date in all_dates if date.get("date_type", "").lower() == "expiry"]
-        production_only = [date for date in all_dates if date.get("date_type", "").lower() == "production"]
-        
-        # Count expired, expiring soon, and valid dates
-        expired_count = sum(1 for date in expiry_only if date.get("expired", False))
-        expiring_soon = sum(1 for date in expiry_only if not date.get("expired", False) and date.get("days_until_expiry", 999) <= 7)
-        valid_count = sum(1 for date in expiry_only if not date.get("expired", False) and date.get("days_until_expiry", 0) > 7)
-        
-        # Create the summary metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Expired", expired_count, delta=None, delta_color="inverse")
-        with col2:
-            st.metric("Expiring Soon", expiring_soon, delta=None, delta_color="inverse")
-        with col3:
-            st.metric("Valid", valid_count, delta=None, delta_color="normal")
-        
-        # Display oldest and newest expiry dates
-        if expiry_only:
-            st.subheader("Expiry Date Range")
-            
-            # Sort by standardized dates
-            sorted_dates = sorted(expiry_only, key=lambda x: x.get("standardized_date", "9999-99-99"))
-            
-            # Get earliest and latest dates
-            earliest = sorted_dates[0] if sorted_dates else None
-            latest = sorted_dates[-1] if sorted_dates else None
-            
-            if earliest and latest:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Earliest Expiry Date:**")
-                    earliest_date = earliest.get("standardized_date", "Unknown")
-                    days_until = earliest.get("days_until_expiry", "Unknown")
-                    expired = earliest.get("expired", False)
-                    
-                    if expired:
-                        st.markdown(f"""
-                        <div style="background-color: #ffcccc; padding: 10px; border-radius: 5px;">
-                            <div style="font-size: 1.2em;">{earliest_date}</div>
-                            <div style="color: red;">Expired {abs(days_until)} days ago</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div style="background-color: {'#fff2cc' if days_until <= 7 else '#d9f2d9'}; padding: 10px; border-radius: 5px;">
-                            <div style="font-size: 1.2em;">{earliest_date}</div>
-                            <div>Days until expiry: {days_until}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown("**Latest Expiry Date:**")
-                    latest_date = latest.get("standardized_date", "Unknown")
-                    days_until = latest.get("days_until_expiry", "Unknown")
-                    expired = latest.get("expired", False)
-                    
-                    if expired:
-                        st.markdown(f"""
-                        <div style="background-color: #ffcccc; padding: 10px; border-radius: 5px;">
-                            <div style="font-size: 1.2em;">{latest_date}</div>
-                            <div style="color: red;">Expired {abs(days_until)} days ago</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div style="background-color: {'#fff2cc' if days_until <= 7 else '#d9f2d9'}; padding: 10px; border-radius: 5px;">
-                            <div style="font-size: 1.2em;">{latest_date}</div>
-                            <div>Days until expiry: {days_until}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-        
-        # Create a simple "Export" or "Save" button that doesn't actually do anything
-        if st.button("Save Results", type="primary", use_container_width=True):
-            st.success("Results saved! (This is a placeholder - no action is taken)")
-            
-        # Start over button
-        if st.button("Start Over", type="secondary", use_container_width=True):
-            st.session_state.product_selected = None
-            st.session_state.analysis_results = []
-            st.session_state.captured_images = []
-            st.session_state.captured_image_files = []
-            st.session_state.images_processed = False
-            st.rerun()            # Display images in a simplified view
-            st.subheader("Captured Images")
-            
-            # Create a container with border
-            st.markdown("""
-            <style>
-            .image-gallery {
-                border: 1px solid #ddd;
-                border-radius: 10px;
-                padding: 10px;
-                background-color: #f8f9fa;
-                margin-bottom: 20px;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            st.markdown('<div class="image-gallery">', unsafe_allow_html=True)
-            
-            # Create a grid layout for images
-            num_images = len(st.session_state.captured_images)
-            cols_per_row = min(3, num_images)  # Up to 3 images per row
-            
-            if num_images > 0:
-                # Calculate number of rows needed
-                rows = (num_images + cols_per_row - 1) // cols_per_row
-                
-                for row in range(rows):
-                    # Create columns for this row
-                    cols = st.columns(cols_per_row)
-                    
-                    # Fill each column with an image
-                    for col in range(cols_per_row):
-                        idx = row * cols_per_row + col
-                        if idx < num_images:
-                            with cols[col]:
-                                st.image(st.session_state.captured_images[idx], channels="BGR", use_column_width=True)
-                                if st.button("❌", key=f"remove_{idx}", help="Remove this image"):
-                                    st.session_state.captured_images.pop(idx)
-                                    st.session_state.captured_image_files.pop(idx)
-                                    st.rerun()
-            else:
-                st.write("No images captured yet. Use the camera above to take pictures.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Single button to clear all
-            if num_images > 0:
-                if st.button("Clear All Images", type="secondary", use_container_width=True):
-                    st.session_state.captured_images = []
-                    st.session_state.captured_image_files = []
-                    st.rerun()import streamlit as st
+import streamlit as st
 import cv2
 import numpy as np
 import os
@@ -697,22 +326,203 @@ def analyze_image_with_vision_api(image_file, product_type):
             "detailed_analysis": "Network error during analysis."
         }
 
+def process_images():
+    """Process the captured images - moved to a function for cleaner code"""
+    st.session_state.analysis_results = []
+    
+    # Process each image
+    for idx, (img, img_file) in enumerate(zip(st.session_state.captured_images, st.session_state.captured_image_files)):
+        # Process the image using the API
+        results = analyze_image_with_vision_api(img_file, st.session_state.product_selected)
+        
+        if results:
+            # Store results
+            st.session_state.analysis_results.append(results)
+    
+    # Set a flag to show we've processed the images
+    st.session_state.images_processed = True
+
+def display_results():
+    """Display the analysis results in a user-friendly format"""
+    st.header("📊 Analysis Results")
+    
+    # Process each image result
+    for idx, results in enumerate(st.session_state.analysis_results):
+        with st.expander(f"Image #{idx+1} Results", expanded=True):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.image(st.session_state.captured_images[idx], channels="BGR", use_column_width=True)
+            
+            with col2:
+                if results.get("dates_found", 0) > 0 and "expiry_dates" in results:
+                    # Create a card-like container for each date
+                    for date_idx, date_info in enumerate(results["expiry_dates"]):
+                        # Extract date information
+                        original_date = date_info.get("date_text", "Unknown")
+                        date_type = date_info.get("date_type", "Unknown").upper()
+                        standardized_date = date_info.get("standardized_date", "Unknown")
+                        days_until = date_info.get("days_until_expiry", "Unknown")
+                        expired = date_info.get("expired", False)
+                        
+                        # Determine background color based on status
+                        if date_type.lower() == "production":
+                            bg_color = "#f0f0f0"  # Light gray for production dates
+                            status_text = "PRODUCTION DATE"
+                        elif expired:
+                            bg_color = "#ffcccc"  # Light red for expired
+                            status_text = "EXPIRED"
+                        elif days_until <= 7:
+                            bg_color = "#fff2cc"  # Light yellow for expiring soon
+                            status_text = "EXPIRING SOON"
+                        else:
+                            bg_color = "#d9f2d9"  # Light green for valid
+                            status_text = "VALID"
+                        
+                        # Display date card
+                        st.markdown(f"""
+                        <div style="background-color: {bg_color}; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="font-weight: bold;">{date_type}</span>
+                                <span style="font-weight: bold;">{status_text}</span>
+                            </div>
+                            <div style="font-size: 1.2em; margin: 5px 0;">{original_date}</div>
+                            <div>Standardized: {standardized_date}</div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Add days until expiry info if it's an expiry date
+                        if date_type.lower() == "expiry":
+                            if expired:
+                                st.markdown(f"""
+                                <div style="color: red;">Expired {abs(days_until)} days ago</div>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"""
+                                <div>Days until expiry: {days_until}</div>
+                                """, unsafe_allow_html=True)
+                        
+                        # Close the div
+                        st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("No dates detected in this image.")
+                
+                # Display PAO information for cosmetics if available
+                if st.session_state.product_selected == "cosmetics" and results.get("pao_found", False):
+                    pao_months = results.get("pao_months", "Unknown")
+                    st.info(f"📌 Period After Opening (PAO): {pao_months} months")
+    
+    # Show a summary of all results
+    if len(st.session_state.analysis_results) > 0:
+        st.header("📝 Summary")
+        
+        # Get all expiry dates
+        all_dates = []
+        for result in st.session_state.analysis_results:
+            if "expiry_dates" in result:
+                all_dates.extend(result["expiry_dates"])
+        
+        # Filter to just expiry dates (not production)
+        expiry_only = [date for date in all_dates if date.get("date_type", "").lower() == "expiry"]
+        production_only = [date for date in all_dates if date.get("date_type", "").lower() == "production"]
+        
+        # Count expired, expiring soon, and valid dates
+        expired_count = sum(1 for date in expiry_only if date.get("expired", False))
+        expiring_soon = sum(1 for date in expiry_only if not date.get("expired", False) and date.get("days_until_expiry", 999) <= 7)
+        valid_count = sum(1 for date in expiry_only if not date.get("expired", False) and date.get("days_until_expiry", 0) > 7)
+        
+        # Create the summary metrics
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Expired", expired_count, delta=None, delta_color="inverse")
+        with col2:
+            st.metric("Expiring Soon", expiring_soon, delta=None, delta_color="inverse")
+        with col3:
+            st.metric("Valid", valid_count, delta=None, delta_color="normal")
+        
+        # Display oldest and newest expiry dates
+        if expiry_only:
+            st.subheader("Expiry Date Range")
+            
+            # Sort by standardized dates
+            sorted_dates = sorted(expiry_only, key=lambda x: x.get("standardized_date", "9999-99-99"))
+            
+            # Get earliest and latest dates
+            earliest = sorted_dates[0] if sorted_dates else None
+            latest = sorted_dates[-1] if sorted_dates else None
+            
+            if earliest and latest:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Earliest Expiry Date:**")
+                    earliest_date = earliest.get("standardized_date", "Unknown")
+                    days_until = earliest.get("days_until_expiry", "Unknown")
+                    expired = earliest.get("expired", False)
+                    
+                    if expired:
+                        st.markdown(f"""
+                        <div style="background-color: #ffcccc; padding: 10px; border-radius: 5px;">
+                            <div style="font-size: 1.2em;">{earliest_date}</div>
+                            <div style="color: red;">Expired {abs(days_until)} days ago</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style="background-color: {'#fff2cc' if days_until <= 7 else '#d9f2d9'}; padding: 10px; border-radius: 5px;">
+                            <div style="font-size: 1.2em;">{earliest_date}</div>
+                            <div>Days until expiry: {days_until}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown("**Latest Expiry Date:**")
+                    latest_date = latest.get("standardized_date", "Unknown")
+                    days_until = latest.get("days_until_expiry", "Unknown")
+                    expired = latest.get("expired", False)
+                    
+                    if expired:
+                        st.markdown(f"""
+                        <div style="background-color: #ffcccc; padding: 10px; border-radius: 5px;">
+                            <div style="font-size: 1.2em;">{latest_date}</div>
+                            <div style="color: red;">Expired {abs(days_until)} days ago</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style="background-color: {'#fff2cc' if days_until <= 7 else '#d9f2d9'}; padding: 10px; border-radius: 5px;">
+                            <div style="font-size: 1.2em;">{latest_date}</div>
+                            <div>Days until expiry: {days_until}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+        
+        # Create a simple "Export" or "Save" button that doesn't actually do anything
+        if st.button("Save Results", type="primary", use_container_width=True):
+            st.success("Results saved! (This is a placeholder - no action is taken)")
+            
+        # Start over button
+        if st.button("Start Over", type="secondary", use_container_width=True):
+            st.session_state.product_selected = None
+            st.session_state.analysis_results = []
+            st.session_state.captured_images = []
+            st.session_state.captured_image_files = []
+            st.session_state.images_processed = False
+            st.rerun()
+
 def main():
-    # Initialize session state for product selection if it doesn't exist
+    # Set up session state
     if 'product_selected' not in st.session_state:
         st.session_state.product_selected = None
-    
     if 'analysis_results' not in st.session_state:
         st.session_state.analysis_results = []
-        
-    # Initialize captured images list
     if 'captured_images' not in st.session_state:
         st.session_state.captured_images = []
         st.session_state.captured_image_files = []
+    if 'images_processed' not in st.session_state:
+        st.session_state.images_processed = False
     
     # If product is not selected, show product selection tiles
     if st.session_state.product_selected is None:
-        st.subheader("Select a product type to analyze")
+        st.subheader("Select product type")
         
         # Create a grid of product selection tiles
         cols = st.columns(len(PRODUCT_CONFIG))
@@ -735,7 +545,7 @@ def main():
                 """, unsafe_allow_html=True)
                 
                 # Hidden button to handle the click
-                if st.button(f"Select {product_data['name']}", key=f"select_{product_id}", help=f"Analyze {product_data['name']}"):
+                if st.button(f"Select {product_data['name']}", key=f"select_{product_id}", help=f"Analyze {product_data['name']}", label_visibility="collapsed"):
                     st.session_state.product_selected = product_id
                     st.rerun()
     
@@ -747,15 +557,16 @@ def main():
         # Show product selection and back button
         col1, col2 = st.columns([1, 5])
         with col1:
-            if st.button("← Back to products"):
+            if st.button("←", help="Back to product selection"):
                 st.session_state.product_selected = None
                 st.session_state.analysis_results = []
                 st.session_state.captured_images = []
                 st.session_state.captured_image_files = []
+                st.session_state.images_processed = False
                 st.rerun()
         
         with col2:
-            st.subheader(f"Analyzing {product_data['emoji']} {product_data['name']} Expiry Dates")
+            st.title(f"{product_data['emoji']} {product_data['name']} Expiry Detector")
         
         # Set up to handle 5 images
         images = []
@@ -767,182 +578,50 @@ def main():
             st.session_state.captured_image_files = []
         
         # Container for the image collection
-        st.markdown(f"📷 Take pictures of expiry dates", style="font-size: 18px;")
+        st.markdown("📷 Take pictures of expiry dates")
         
         # Simple camera element
         img, img_file = capture_image("main")
         
         # Display currently captured images
         if len(st.session_state.captured_images) > 0:
+            # Display images in a simplified view
             st.subheader("Captured Images")
             
-            # Display images horizontally in a single row
-            image_cols = st.columns(len(st.session_state.captured_images))
+            # Create a container with border
+            st.markdown("""
+            <style>
+            .image-gallery {
+                border: 1px solid #ddd;
+                border-radius: 10px;
+                padding: 10px;
+                background-color: #f8f9fa;
+                margin-bottom: 20px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
-            # Display each image
-            for idx, img in enumerate(st.session_state.captured_images):
-                with image_cols[idx]:
-                    st.image(img, channels="BGR", use_column_width=True)
-                    if st.button("Remove", key=f"remove_{idx}"):
-                        st.session_state.captured_images.pop(idx)
-                        st.session_state.captured_image_files.pop(idx)
-                        st.rerun()
+            st.markdown('<div class="image-gallery">', unsafe_allow_html=True)
             
-            # Clear all button in a separate row
-            if st.button("Clear All Images"):
-                st.session_state.captured_images = []
-                st.session_state.captured_image_files = []
-                st.rerun()
-                
-        # Use the session state images
-        images = st.session_state.captured_images
-        image_files = st.session_state.captured_image_files
-        
-        # Process button - simplified UI
-        if len(images) > 0:
-            st.button("Analyze Expiry Dates", type="primary", use_container_width=True, on_click=process_images)
+            # Create a grid layout for images
+            num_images = len(st.session_state.captured_images)
+            cols_per_row = min(3, num_images)  # Up to 3 images per row
             
-def process_images():
-    """Process the captured images - moved to a function for cleaner code"""
-    st.session_state.analysis_results = []
-    
-    # Process each image
-    for idx, (img, img_file) in enumerate(zip(st.session_state.captured_images, st.session_state.captured_image_files)):
-        # Process the image using the API
-        results = analyze_image_with_vision_api(img_file, st.session_state.product_selected)
-        
-        if results:
-            # Store results
-            st.session_state.analysis_results.append(results)
-    
-    # Set a flag to show we've processed the images
-    st.session_state.images_processed = True
-            st.session_state.analysis_results = []
-            
-            st.subheader("Analysis Results")
-            
-            # Process each image
-            for idx, (img, img_file) in enumerate(zip(images, image_files)):
-                st.subheader(f"Image #{idx+1} Analysis")
-                col1, col2 = st.columns(2)
+            if num_images > 0:
+                # Calculate number of rows needed
+                rows = (num_images + cols_per_row - 1) // cols_per_row
                 
-                with col1:
-                    st.image(img, channels="BGR", use_column_width=True)
-                
-                with col2:
-                    with st.spinner(f"Analyzing image #{idx+1}..."):
-                            # Process the image using the API
-                            results = analyze_image_with_vision_api(img_file, selected_product)
-                            
-                            if results:
-                                # Store results
-                                st.session_state.analysis_results.append(results)
-                                
-                                # Display results
-                                st.metric("Dates Found", results.get("dates_found", 0))
-                                
-                                # Display each detected date
-                                if results.get("dates_found", 0) > 0 and "expiry_dates" in results:
-                                    for date_idx, date_info in enumerate(results["expiry_dates"]):
-                                        st.markdown(f"#### Date {date_idx+1}")
-                                        
-                                        # Create 4 columns for date information
-                                        col1, col2, col3, col4 = st.columns(4)
-                                        
-                                        # Format information
-                                        original_date = date_info.get("date_text", "Unknown")
-                                        standardized_date = date_info.get("standardized_date", "Unknown")
-                                        days_until = date_info.get("days_until_expiry", "Unknown")
-                                        expired = date_info.get("expired", False)
-                                        
-                                        # Display in columns
-                                        col1.markdown(f"**Original Text:** {original_date}")
-                                        col2.markdown(f"**Standardized:** {standardized_date}")
-                                        
-                                        # Add color based on days until expiry
-                                        if expired:
-                                            col3.markdown(f"**Days until expiry:** <span style='color:red;font-weight:bold;'>Expired ({days_until} days)</span>", unsafe_allow_html=True)
-                                        elif days_until <= 7:
-                                            col3.markdown(f"**Days until expiry:** <span style='color:orange;font-weight:bold;'>{days_until} days</span>", unsafe_allow_html=True)
-                                        else:
-                                            col3.markdown(f"**Days until expiry:** <span style='color:green;font-weight:bold;'>{days_until} days</span>", unsafe_allow_html=True)
-                                        
-                                        # Status column
-                                        if expired:
-                                            col4.error("EXPIRED")
-                                        elif days_until <= 7:
-                                            col4.warning("EXPIRING SOON")
-                                        else:
-                                            col4.success("VALID")
-                                else:
-                                    st.warning("No expiry dates detected in this image.")
-                                
-                                # Display PAO information for cosmetics if available
-                                if selected_product == "cosmetics" and results.get("pao_found", False):
-                                    pao_months = results.get("pao_months", "Unknown")
-                                    st.info(f"📌 Period After Opening (PAO): {pao_months} months")
-                                
-                                st.success("Analysis complete!")
-                                st.subheader("Detailed Analysis")
-                                st.write(results.get("detailed_analysis", "No detailed analysis available."))
-                            else:
-                                st.error("Failed to analyze the image. Please check your configuration and try again.")
-            
-            # Show a summary of all results if there are multiple images
-            if len(st.session_state.analysis_results) > 1:
-                st.subheader("Overall Summary")
-                
-                # Calculate totals
-                total_dates = sum(result.get("dates_found", 0) for result in st.session_state.analysis_results)
-                
-                # Get all expiry dates
-                all_expiry_dates = []
-                for result in st.session_state.analysis_results:
-                    if "expiry_dates" in result:
-                        all_expiry_dates.extend(result["expiry_dates"])
-                
-                # Count expired, expiring soon, and valid dates
-                expired_count = sum(1 for date in all_expiry_dates if date.get("expired", False))
-                expiring_soon = sum(1 for date in all_expiry_dates if not date.get("expired", False) and date.get("days_until_expiry", 999) <= 7)
-                valid_count = sum(1 for date in all_expiry_dates if not date.get("expired", False) and date.get("days_until_expiry", 0) > 7)
-                
-                # Display overall metrics
-                col_total, col_expired, col_expiring, col_valid = st.columns(4)
-                col_total.metric("Total Dates", total_dates)
-                col_expired.metric("Expired", expired_count)
-                col_expiring.metric("Expiring Soon (≤7 days)", expiring_soon)
-                col_valid.metric("Valid", valid_count)
-                
-                # Show table of all dates if any are found
-                if total_dates > 0:
-                    st.subheader("All Detected Expiry Dates")
+                for row in range(rows):
+                    # Create columns for this row
+                    cols = st.columns(cols_per_row)
                     
-                    # Create a dataframe with all dates
-                    import pandas as pd
-                    
-                    # Prepare data for dataframe
-                    data = []
-                    for i, result in enumerate(st.session_state.analysis_results):
-                        if "expiry_dates" in result:
-                            for date in result["expiry_dates"]:
-                                status = "EXPIRED" if date.get("expired", False) else "EXPIRING SOON" if date.get("days_until_expiry", 999) <= 7 else "VALID"
-                                data.append({
-                                    "Image": f"Image #{i+1}",
-                                    "Original Text": date.get("date_text", "Unknown"),
-                                    "Standardized Date": date.get("standardized_date", "Unknown"),
-                                    "Days Until Expiry": date.get("days_until_expiry", "Unknown"),
-                                    "Status": status
-                                })
-                    
-                    # Create and display dataframe
-                    if data:
-                        df = pd.DataFrame(data)
-                        st.dataframe(df, hide_index=True)
-            
-            # Add "Save to Inventory" button (placeholder for future functionality)
-            if len(st.session_state.analysis_results) > 0:
-                if st.button("Save to Inventory"):
-                    st.success("Expiry dates saved to your inventory! (This is a placeholder - no action is taken)")
-
-if __name__ == "__main__":
-    main()
+                    # Fill each column with an image
+                    for col in range(cols_per_row):
+                        idx = row * cols_per_row + col
+                        if idx < num_images:
+                            with cols[col]:
+                                st.image(st.session_state.captured_images[idx], channels="BGR", use_column_width=True)
+                                if st.button("❌", key=f"remove_{idx}", help="Remove this image"):
+                                    st.session_state.captured_images.pop(idx)
+                                    st.session_state.captured_image_files.pop(idx)
+                                    st.rerun()
