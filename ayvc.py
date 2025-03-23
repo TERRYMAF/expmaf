@@ -67,19 +67,19 @@ def get_prompt(product_type):
         5. If only month and year are provided (MM/YYYY), assume day 1 of that month.
         
         Return the results in this JSON format:
-        {
+        {{
           "dates_found": <number>,
           "expiry_dates": [
-            {
+            {{
               "date_text": "<exactly as shown on packaging>",
               "date_type": "<expiry or production>",
               "standardized_date": "<YYYY-MM-DD format>",
               "days_until_expiry": <number of days from current date>,
               "expired": <boolean: true if expired, false if not>
-            }
+            }}
           ],
           "detailed_analysis": "<brief description of what you see, including package type>"
-        }
+        }}
     """
     return base_prompt
 
