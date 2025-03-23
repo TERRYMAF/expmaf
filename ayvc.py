@@ -168,8 +168,23 @@ def capture_image(key):
         st.warning("Maximum 5 images allowed. Please process current images or remove some.")
         return None, None
     
-    # Camera capture with instructions
+    # Troubleshooting info
     st.info("📸 Position the expiry date clearly in the frame. Make sure there's good lighting.")
+    
+    # Camera troubleshooting expander
+    with st.expander("Camera not working? Click here for help"):
+        st.markdown("""
+        ### Camera Troubleshooting
+        
+        If you cannot see the camera:
+        
+        1. **Check browser permissions** - You may need to allow camera access in your browser
+        2. **Try a different browser** - Chrome works best with Streamlit
+        3. **Make sure your camera is connected** - Check if your webcam is working in other applications
+        4. **Refresh the page** - Sometimes a simple refresh can fix camera issues
+        """)
+    
+    # Camera capture 
     img_file_buffer = st.camera_input(f"Take a picture", key=f"camera_{key}")
     
     if img_file_buffer is not None:
@@ -185,6 +200,32 @@ def capture_image(key):
             st.rerun()
         
         return img, img_file_buffer
+    
+    # Fallback for testing when camera is not available
+    st.markdown("---")
+    st.warning("⚠️ Camera not detected. As a fallback, you can use the test image option:")
+    
+    if st.button("Use Test Image"):
+        # Create a simple test image with text
+        test_img = np.ones((300, 400, 3), dtype=np.uint8) * 255  # White background
+        
+        # Add some text to simulate expiry dates
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(test_img, "EXP: 01/2026", (50, 50), font, 0.7, (0, 0, 0), 2)
+        cv2.putText(test_img, "MFG: 01/2024", (50, 100), font, 0.7, (0, 0, 0), 2)
+        cv2.putText(test_img, "Best Before: 31/12/2025", (50, 150), font, 0.7, (0, 0, 0), 2)
+        
+        # Convert to bytes for session state
+        _, buffer = cv2.imencode(".jpg", test_img)
+        io_buf = BytesIO(buffer)
+        
+        # Process the test image
+        if 'captured_images' in st.session_state and len(st.session_state.captured_images) < 5:
+            st.session_state.captured_images.append(test_img)
+            st.session_state.captured_image_files.append(io_buf)
+            st.success(f"Test image added! ({len(st.session_state.captured_images)}/5)")
+            st.rerun()
+    
     return None, None
 
 def encode_image_to_base64(image_file):
@@ -568,14 +609,9 @@ def main():
         with col2:
             st.title(f"{product_data['emoji']} {product_data['name']} Expiry Detector")
         
-        # Set up to handle 5 images
-        images = []
-        image_files = []
-        
-        # Initialize list in session state if not existing
-        if 'captured_images' not in st.session_state:
-            st.session_state.captured_images = []
-            st.session_state.captured_image_files = []
+        # Set up to handle images
+        images = st.session_state.captured_images
+        image_files = st.session_state.captured_image_files
         
         # Container for the image collection
         st.markdown("📷 Take pictures of expiry dates")
@@ -625,3 +661,14 @@ def main():
                                     st.session_state.captured_images.pop(idx)
                                     st.session_state.captured_image_files.pop(idx)
                                     st.rerun()
+            else:
+                st.write("No images captured yet. Use the camera above to take pictures.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Single button to clear all
+            if num_images > 0:
+                if st.button("Clear All Images", type="secondary", use_container_width=True):
+                    st.session_state.captured_images = []
+                    st.session_state.captured_image_files = []
+                    st.rerun()
