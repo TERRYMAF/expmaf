@@ -56,7 +56,7 @@ def get_prompt(product_type):
         Analyze this image and identify any expiry dates on {PRODUCT_CONFIG[product_type]['name']}.
         
         IMPORTANT: 
-        1. Differentiate between expiry dates and production/manufacturing dates.
+        1. Differentiate between expiry dates and production/manufacturing dates image might have arabic and english dates stick with english
         2. Expiry dates typically come AFTER production dates and are often preceded by symbols like:
            - "E" or "EXP" or "Expiry" or "Best Before" or "Use By" or "BB"
            - Sometimes format: "E: 01/2025" or "EXP: 01/2025"
