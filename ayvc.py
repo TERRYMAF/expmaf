@@ -133,7 +133,30 @@ def capture_image(key):
     previous_count = 0
     if 'captured_images' in st.session_state:
         previous_count = len(st.session_state.captured_images)
+    
+    # File uploader option
+    st.write("Option 1: Upload an image from your device")
+    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"], key=f"uploader_{key}")
+    
+    if uploaded_file is not None:
+        # Convert to OpenCV format
+        bytes_data = uploaded_file.getvalue()
+        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
         
+        st.image(img, channels="BGR", caption="Uploaded Image", use_column_width=True)
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("Add to collection", key=f"add_uploaded_{key}"):
+                if 'captured_images' in st.session_state and len(st.session_state.captured_images) < 5:
+                    st.session_state.captured_images.append(img)
+                    st.session_state.captured_image_files.append(uploaded_file)
+                    st.success(f"Image added! ({len(st.session_state.captured_images)}/5)")
+                    st.rerun()
+        return img, uploaded_file
+    
+    # Camera option
+    st.write("Option 2: Take a picture with your camera")
     img_file_buffer = st.camera_input(f"Take picture", key=f"camera_{key}")
     
     if img_file_buffer is not None:
@@ -141,13 +164,20 @@ def capture_image(key):
         bytes_data = img_file_buffer.getvalue()
         img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
         
-        # Add button to confirm this image
-        if st.button("Add this image to collection", key=f"add_image_{key}"):
-            if 'captured_images' in st.session_state and len(st.session_state.captured_images) < 5:
-                st.session_state.captured_images.append(img)
-                st.session_state.captured_image_files.append(img_file_buffer)
-                st.success(f"Image added! ({len(st.session_state.captured_images)}/5)")
-                st.rerun()
+        # Add a preview and review section
+        st.write("Review your image:")
+        st.image(img, channels="BGR", caption="Preview", use_column_width=True)
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("Add to collection", key=f"add_image_{key}"):
+                if 'captured_images' in st.session_state and len(st.session_state.captured_images) < 5:
+                    st.session_state.captured_images.append(img)
+                    st.session_state.captured_image_files.append(img_file_buffer)
+                    st.success(f"Image added! ({len(st.session_state.captured_images)}/5)")
+                    st.rerun()
+        with col2:
+            st.write("Take another picture if you're not satisfied with this one.")
         
         return img, img_file_buffer
     return None, None
@@ -362,11 +392,13 @@ def main():
             st.session_state.captured_images = []
             st.session_state.captured_image_files = []
         
-        # Container for the camera input
-        st.markdown(f"📷 Take pictures of {product_data['name']} expiry dates (maximum 5)")
+        # Container for the image collection
+        st.markdown(f"📷 Collect images of {product_data['name']} expiry dates (maximum 5)")
         
-        # Single camera element
-        img, img_file = capture_image("main")
+        # Collection workflow
+        st.subheader("Add New Images")
+        with st.expander("Click to add a new image", expanded=True):
+            img, img_file = capture_image("main")
         
         # Display currently captured images
         if len(st.session_state.captured_images) > 0:
