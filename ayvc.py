@@ -18,29 +18,7 @@ st.set_page_config(
 st.title("📅 Expiry Date Detector")
 st.markdown("Take a picture of a product expiry date to detect and analyze it")
 
-# Product configuration dictionary
-PRODUCT_CONFIG = {
-    "packaged_food": {
-        "emoji": "🥫",
-        "name": "Packaged Food"
-    },
-    "dairy": {
-        "emoji": "🥛",
-        "name": "Dairy Products"
-    },
-    "medicine": {
-        "emoji": "💊",
-        "name": "Medicine"
-    },
-    "cosmetics": {
-        "emoji": "🧴",
-        "name": "Cosmetics"
-    }
-}
-
 # Initialize session state
-if 'product_selected' not in st.session_state:
-    st.session_state.product_selected = None
 if 'current_image' not in st.session_state:
     st.session_state.current_image = None
 if 'current_image_file' not in st.session_state:
@@ -50,10 +28,10 @@ if 'analysis_result' not in st.session_state:
 if 'image_processed' not in st.session_state:
     st.session_state.image_processed = False
 
-def get_prompt(product_type):
-    """Get the appropriate prompt for each product type"""
-    base_prompt = f"""
-        Analyze this image and identify any expiry dates on {PRODUCT_CONFIG[product_type]['name']}.
+def get_prompt():
+    """Get the prompt for expiry date detection"""
+    prompt = """
+        Analyze this image and identify any expiry dates on the product.
         
         IMPORTANT: 
         1. Differentiate between expiry dates and production/manufacturing dates.
@@ -81,7 +59,7 @@ def get_prompt(product_type):
           "detailed_analysis": "<brief description of what you see, including package type>"
         }}
     """
-    return base_prompt
+    return prompt
 
 def capture_image():
     """Capture an image"""
@@ -166,17 +144,12 @@ def get_secret(key, default=None):
     except Exception:
         return default
 
-def analyze_image(image_file, product_type):
+def analyze_image(image_file):
     """Analyze image using Vision API"""
-    # Debug information
-    st.write("Debug: Starting image analysis")
-    
     base64_image = encode_image_to_base64(image_file)
     if not base64_image:
         st.error("Error encoding image")
         return None
-    
-    st.write("Debug: Image encoded successfully")
     
     # Get API configuration from secrets
     endpoint = get_secret("azure_endpoint")
@@ -186,26 +159,7 @@ def analyze_image(image_file, product_type):
     # Check if required settings are available
     if not endpoint or not api_key or not model:
         st.error("Missing API configuration. Please set up your secrets.toml file with azure_endpoint, azure_api_key, and azure_model.")
-        
-        # For testing/demo purposes, return minimal placeholder result
-        st.warning("Using placeholder data for demonstration")
-        current_date = datetime.now().date()
-        placeholder_result = {
-            "dates_found": 1,
-            "expiry_dates": [
-                {
-                    "date_text": "EXP: 01/01/2026",
-                    "date_type": "expiry",
-                    "standardized_date": "2026-01-01",
-                    "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                    "expired": False
-                }
-            ],
-            "detailed_analysis": "This appears to be a product with an expiry date visible."
-        }
-        return placeholder_result
-    
-    st.write(f"Debug: API configuration found - Endpoint: {endpoint[:10]}..., Model: {model}")
+        return None
     
     # Ensure endpoint has the right format
     if not endpoint.startswith(('http://', 'https://')):
@@ -221,15 +175,15 @@ def analyze_image(image_file, product_type):
         "api-key": api_key
     }
     
-    # Get product-specific prompt
-    product_prompt = get_prompt(product_type)
+    # Get prompt
+    prompt = get_prompt()
     
     # Prepare payload
     payload = {
         "messages": [
-            {"role": "system", "content": f"You are a computer vision assistant specialized in detecting expiry dates on {PRODUCT_CONFIG[product_type]['name']}."},
+            {"role": "system", "content": "You are a computer vision assistant specialized in detecting expiry dates on products."},
             {"role": "user", "content": [
-                {"type": "text", "text": product_prompt},
+                {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
             ]}
         ],
@@ -238,136 +192,36 @@ def analyze_image(image_file, product_type):
     }
     
     try:
-        st.write("Debug: Sending API request...")
         # Make the API call
         response = requests.post(api_url, headers=headers, json=payload, timeout=60)
         
         # Check for HTTP errors
         if response.status_code != 200:
             st.error(f"API Error: {response.status_code}")
-            st.write(f"Debug: API Error Response: {response.text[:200]}...")
-            
-            # For testing/demo purposes, return placeholder result
-            st.warning("Using placeholder data for demonstration")
-            current_date = datetime.now().date()
-            placeholder_result = {
-                "dates_found": 1,
-                "expiry_dates": [
-                    {
-                        "date_text": "EXP: 01/01/2026",
-                        "date_type": "expiry",
-                        "standardized_date": "2026-01-01",
-                        "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                        "expired": False
-                    }
-                ],
-                "detailed_analysis": "This appears to be a product with an expiry date visible."
-            }
-            return placeholder_result
+            return None
         
         # Parse the response
-        st.write("Debug: API response received")
         result = response.json()
         
         # Extract the content from the response
         if "choices" in result and len(result["choices"]) > 0:
             content = result["choices"][0].get("message", {}).get("content", "{}")
             
-            st.write(f"Debug: Content from API: {content[:100]}...")
-            
             # Try to parse the content as JSON
             try:
                 parsed_result = json.loads(content)
-                
-                # Process the dates - standardize format and calculate days until expiry
-                current_date = datetime.now().date()
-                
-                if "expiry_dates" in parsed_result:
-                    for date_info in parsed_result["expiry_dates"]:
-                        if "standardized_date" in date_info:
-                            try:
-                                # Parse the standardized date
-                                expiry_date = datetime.strptime(date_info["standardized_date"], "%Y-%m-%d").date()
-                                
-                                # Calculate days until expiry
-                                days_until = (expiry_date - current_date).days
-                                date_info["days_until_expiry"] = days_until
-                                
-                                # Set expired flag
-                                date_info["expired"] = days_until < 0
-                            except Exception as e:
-                                # Skip problematic dates
-                                st.write(f"Debug: Date parsing error: {str(e)}")
-                                date_info["days_until_expiry"] = 0
-                                date_info["expired"] = False
-                
-                st.write("Debug: Analysis complete")
                 return parsed_result
             
-            except json.JSONDecodeError as e:
-                st.error(f"Could not parse the API response: {str(e)}")
-                st.write(f"Debug: JSON decode error. Raw content: {content[:200]}...")
-                
-                # For testing/demo purposes, return placeholder result
-                st.warning("Using placeholder data for demonstration")
-                current_date = datetime.now().date()
-                placeholder_result = {
-                    "dates_found": 1,
-                    "expiry_dates": [
-                        {
-                            "date_text": "EXP: 01/01/2026",
-                            "date_type": "expiry",
-                            "standardized_date": "2026-01-01",
-                            "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                            "expired": False
-                        }
-                    ],
-                    "detailed_analysis": "This appears to be a product with an expiry date visible."
-                }
-                return placeholder_result
+            except json.JSONDecodeError:
+                st.error("Could not parse the API response")
+                return None
         
         st.error("Unexpected API response format")
-        st.write(f"Debug: Unexpected format. Response structure: {str(result.keys())}")
-        
-        # For testing/demo purposes, return placeholder result
-        st.warning("Using placeholder data for demonstration")
-        current_date = datetime.now().date()
-        placeholder_result = {
-            "dates_found": 1,
-            "expiry_dates": [
-                {
-                    "date_text": "EXP: 01/01/2026",
-                    "date_type": "expiry",
-                    "standardized_date": "2026-01-01",
-                    "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                    "expired": False
-                }
-            ],
-            "detailed_analysis": "This appears to be a product with an expiry date visible."
-        }
-        return placeholder_result
+        return None
         
     except requests.exceptions.RequestException as e:
         st.error(f"Error in API request: {str(e)}")
-        st.write(f"Debug: Request exception: {str(e)}")
-        
-        # For testing/demo purposes, return placeholder result
-        st.warning("Using placeholder data for demonstration")
-        current_date = datetime.now().date()
-        placeholder_result = {
-            "dates_found": 1,
-            "expiry_dates": [
-                {
-                    "date_text": "EXP: 01/01/2026",
-                    "date_type": "expiry",
-                    "standardized_date": "2026-01-01",
-                    "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                    "expired": False
-                }
-            ],
-            "detailed_analysis": "This appears to be a product with an expiry date visible."
-        }
-        return placeholder_result
+        return None
 
 def process_image():
     """Process the current image"""
@@ -375,55 +229,27 @@ def process_image():
         st.error("No image available to process")
         return
     
-    st.info("Starting analysis...")
-    
-    # Process the image with the vision API
-    result = analyze_image(st.session_state.current_image_file, st.session_state.product_selected)
-    
-    if result:
-        st.session_state.analysis_result = result
-        st.session_state.image_processed = True
-        st.success("Analysis completed successfully")
-    else:
-        st.error("Failed to analyze the image. Using placeholder data for demonstration.")
-        # Create placeholder data for demonstration
-        current_date = datetime.now().date()
-        st.session_state.analysis_result = {
-            "dates_found": 1,
-            "expiry_dates": [
-                {
-                    "date_text": "EXP: 01/01/2026",
-                    "date_type": "expiry",
-                    "standardized_date": "2026-01-01",
-                    "days_until_expiry": (datetime(2026, 1, 1).date() - current_date).days,
-                    "expired": False
-                }
-            ],
-            "detailed_analysis": "This appears to be a product with an expiry date visible."
-        }
-        st.session_state.image_processed = True
+    with st.spinner("Analyzing image..."):
+        # Process the image with the vision API
+        result = analyze_image(st.session_state.current_image_file)
+        
+        if result:
+            st.session_state.analysis_result = result
+            st.session_state.image_processed = True
 
 def display_date_card(date_info):
     """Display a single date card with appropriate styling"""
     original_date = date_info.get("date_text", "Unknown")
     date_type = date_info.get("date_type", "Unknown").upper()
     standardized_date = date_info.get("standardized_date", "Unknown")
-    days_until = date_info.get("days_until_expiry", "Unknown")
-    expired = date_info.get("expired", False)
     
-    # Determine background color based on status
+    # Determine background color based on type
     if date_type.lower() == "production":
         bg_color = "#f0f0f0"  # Light gray for production dates
         status_text = "PRODUCTION DATE"
-    elif expired:
-        bg_color = "#ffcccc"  # Light red for expired
-        status_text = "EXPIRED"
-    elif days_until <= 7:
-        bg_color = "#fff2cc"  # Light yellow for expiring soon
-        status_text = "EXPIRING SOON"
     else:
-        bg_color = "#d9f2d9"  # Light green for valid
-        status_text = "VALID"
+        bg_color = "#d9f2d9"  # Light green for expiry dates
+        status_text = "EXPIRY DATE"
     
     # Display date card
     st.markdown(f"""
@@ -434,21 +260,8 @@ def display_date_card(date_info):
         </div>
         <div style="font-size: 1.2em; margin: 5px 0;">{original_date}</div>
         <div>Standardized: {standardized_date}</div>
+    </div>
     """, unsafe_allow_html=True)
-    
-    # Add days until expiry info if it's an expiry date
-    if date_type.lower() == "expiry":
-        if expired:
-            st.markdown(f"""
-            <div style="color: red;">Expired {abs(days_until)} days ago</div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div>Days until expiry: {days_until}</div>
-            """, unsafe_allow_html=True)
-    
-    # Close the div
-    st.markdown("</div>", unsafe_allow_html=True)
 
 def display_results():
     """Display the analysis results"""
@@ -480,78 +293,32 @@ def display_results():
         st.subheader("Analysis Details")
         st.write(results["detailed_analysis"])
     
-    # Action buttons
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Scan Another Product", type="primary", use_container_width=True):
-            st.session_state.current_image = None
-            st.session_state.current_image_file = None
-            st.session_state.image_processed = False
-            st.session_state.analysis_result = None
-            st.rerun()
-    
-    with col2:
-        if st.button("Change Product Type", type="secondary", use_container_width=True):
-            st.session_state.product_selected = None
-            st.session_state.current_image = None
-            st.session_state.current_image_file = None
-            st.session_state.image_processed = False
-            st.session_state.analysis_result = None
-            st.rerun()
+    # Action button
+    if st.button("Scan Another Product", type="primary", use_container_width=True):
+        st.session_state.current_image = None
+        st.session_state.current_image_file = None
+        st.session_state.image_processed = False
+        st.session_state.analysis_result = None
+        st.rerun()
 
 # Main app flow
 def main():
-    # If product is not selected, show product selection tiles
-    if st.session_state.product_selected is None:
-        st.subheader("Select product type")
-        
-        # Create a grid of product selection tiles
-        cols = st.columns(len(PRODUCT_CONFIG))
-        
-        for i, (product_id, product_data) in enumerate(PRODUCT_CONFIG.items()):
-            with cols[i]:
-                st.write(f"**{product_data['name']}**", unsafe_allow_html=True)
-                
-                # Create a clickable button with emoji
-                if st.button(f"{product_data['emoji']} Select", key=f"select_{product_id}"):
-                    st.session_state.product_selected = product_id
-                    st.rerun()
-    
-    # If product is selected, show the camera interface or results
+    # If we have results, show them
+    if st.session_state.image_processed and st.session_state.analysis_result:
+        display_results()
+    # Otherwise show image capture interface
     else:
-        product_data = PRODUCT_CONFIG[st.session_state.product_selected]
-        
-        # Header with back button
-        col1, col2 = st.columns([1, 5])
-        with col1:
-            if st.button("←", help="Back to product selection"):
-                st.session_state.product_selected = None
-                st.session_state.current_image = None
-                st.session_state.current_image_file = None
-                st.session_state.image_processed = False
-                st.session_state.analysis_result = None
+        # If we already have an image, show it and the analyze button
+        if st.session_state.current_image is not None:
+            display_current_image()
+            
+            # Analyze button
+            if st.button("Analyze Expiry Date", type="primary", use_container_width=True):
+                process_image()
                 st.rerun()
-        
-        with col2:
-            st.subheader(f"{product_data['emoji']} {product_data['name']} Expiry Detector")
-        
-        # If we have results, show them
-        if st.session_state.image_processed and st.session_state.analysis_result:
-            display_results()
-        # Otherwise show image capture interface
+        # Otherwise show the camera capture
         else:
-            # If we already have an image, show it and the analyze button
-            if st.session_state.current_image is not None:
-                display_current_image()
-                
-                # Analyze button
-                if st.button("Analyze Expiry Date", type="primary", use_container_width=True):
-                    process_image()
-                    st.rerun()
-            # Otherwise show the camera capture
-            else:
-                capture_image()
+            capture_image()
 
 if __name__ == "__main__":
     main()
