@@ -27,6 +27,8 @@ if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = None
 if 'image_processed' not in st.session_state:
     st.session_state.image_processed = False
+if 'api_error' not in st.session_state:
+    st.session_state.api_error = None
 
 def get_prompt():
     """Get the prompt for expiry date detection"""
@@ -82,16 +84,20 @@ def capture_image():
     
     # Process camera image if available
     if img_file_buffer is not None:
-        # Convert to OpenCV format
-        bytes_data = img_file_buffer.getvalue()
-        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        
-        # Store in session state
-        st.session_state.current_image = img
-        st.session_state.current_image_file = img_file_buffer
-        st.session_state.image_processed = False
-        st.session_state.analysis_result = None
-        st.rerun()
+        try:
+            # Convert to OpenCV format
+            bytes_data = img_file_buffer.getvalue()
+            img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            # Store in session state
+            st.session_state.current_image = img
+            st.session_state.current_image_file = img_file_buffer
+            st.session_state.image_processed = False
+            st.session_state.analysis_result = None
+            st.session_state.api_error = None
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error processing camera image: {str(e)}")
 
 def display_current_image():
     """Display the currently captured image"""
@@ -125,6 +131,7 @@ def display_current_image():
             st.session_state.current_image_file = None
             st.session_state.image_processed = False
             st.session_state.analysis_result = None
+            st.session_state.api_error = None
             st.rerun()
 
 def encode_image_to_base64(image_file):
@@ -146,26 +153,32 @@ def get_secret(key, default=None):
 
 def analyze_image(image_file):
     """Analyze image using Vision API"""
-    st.write("API Step 1: Starting image encoding...")
+    # Clear previous errors
+    st.session_state.api_error = None
     
+    # Encode image
     base64_image = encode_image_to_base64(image_file)
     if not base64_image:
-        st.error("Error encoding image")
+        st.session_state.api_error = "Failed to encode image"
         return None
-    
-    st.write("API Step 2: Image encoded successfully.")
     
     # Get API configuration from secrets
     endpoint = get_secret("azure_endpoint")
     api_key = get_secret("azure_api_key")
     model = get_secret("azure_model")
     
-    # Show config status (without revealing sensitive info)
-    st.write(f"API Step 3: Checking configuration - Endpoint: {'Present' if endpoint else 'Missing'}, API Key: {'Present' if api_key else 'Missing'}, Model: {'Present' if model else 'Missing'}")
-    
-    # Check if required settings are available
-    if not endpoint or not api_key or not model:
-        st.error("Missing API configuration. Please set up your secrets.toml file with azure_endpoint, azure_api_key, and azure_model.")
+    # Validate API configuration
+    missing_configs = []
+    if not endpoint:
+        missing_configs.append("Azure Endpoint")
+    if not api_key:
+        missing_configs.append("API Key")
+    if not model:
+        missing_configs.append("Model")
+        
+    if missing_configs:
+        error_msg = f"Missing API configuration: {', '.join(missing_configs)}"
+        st.session_state.api_error = error_msg
         return None
     
     # Ensure endpoint has the right format
@@ -185,8 +198,6 @@ def analyze_image(image_file):
     # Get prompt
     prompt = get_prompt()
     
-    st.write("API Step 4: Preparing API request...")
-    
     # Prepare payload
     payload = {
         "messages": [
@@ -201,47 +212,51 @@ def analyze_image(image_file):
     }
     
     try:
-        st.write("API Step 5: Sending API request...")
-        
-        # Make the API call
-        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
-        
-        st.write(f"API Step 6: Response received. Status code: {response.status_code}")
+        # Make the API call with a timeout
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
         
         # Check for HTTP errors
         if response.status_code != 200:
-            st.error(f"API Error: {response.status_code}")
+            error_msg = f"API Error (Status {response.status_code}): "
             if response.text:
-                st.write(f"Error details: {response.text[:200]}...")
+                try:
+                    error_details = response.json()
+                    if "error" in error_details and "message" in error_details["error"]:
+                        error_msg += error_details["error"]["message"]
+                    else:
+                        error_msg += response.text[:200]
+                except:
+                    error_msg += response.text[:200]
+            st.session_state.api_error = error_msg
             return None
         
         # Parse the response
         result = response.json()
         
-        st.write(f"API Step 7: Response parsed. Keys: {', '.join(result.keys())}")
-        
         # Extract the content from the response
         if "choices" in result and len(result["choices"]) > 0:
             content = result["choices"][0].get("message", {}).get("content", "{}")
             
-            st.write(f"API Step 8: Content extracted. First 50 chars: {content[:50]}...")
-            
             # Try to parse the content as JSON
             try:
                 parsed_result = json.loads(content)
-                st.write("API Step 9: JSON parsing successful.")
                 return parsed_result
             
             except json.JSONDecodeError as e:
-                st.error(f"Could not parse the API response as JSON: {str(e)}")
-                st.write(f"Raw content received: {content[:200]}...")
+                st.session_state.api_error = f"Could not parse API response as JSON: {str(e)}"
                 return None
         
-        st.error("Unexpected API response format")
+        st.session_state.api_error = "Unexpected API response format"
         return None
         
+    except requests.exceptions.Timeout:
+        st.session_state.api_error = "API request timed out. Please try again."
+        return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Error in API request: {str(e)}")
+        st.session_state.api_error = f"API request error: {str(e)}"
+        return None
+    except Exception as e:
+        st.session_state.api_error = f"Unexpected error: {str(e)}"
         return None
 
 def process_image():
@@ -250,34 +265,36 @@ def process_image():
         st.error("No image available to process")
         return
     
-    st.write("Step 1: Starting image analysis...")
-    
     with st.spinner("Analyzing image..."):
         # Process the image with the vision API
         result = analyze_image(st.session_state.current_image_file)
         
-        st.write("Step 2: Analysis completed. Result:", "Success" if result else "Failed")
-        
         if result:
             st.session_state.analysis_result = result
             st.session_state.image_processed = True
-            st.write("Step 3: Results stored in session state.")
         else:
-            st.error("Failed to analyze the image. Please check your API configuration or try a different image.")
+            st.session_state.image_processed = False
+            # Error message will be displayed from the api_error session state
 
 def display_date_card(date_info):
     """Display a single date card with appropriate styling"""
     original_date = date_info.get("date_text", "Unknown")
     date_type = date_info.get("date_type", "Unknown").upper()
     standardized_date = date_info.get("standardized_date", "Unknown")
+    days_until_expiry = date_info.get("days_until_expiry", "Unknown")
+    is_expired = date_info.get("expired", False)
     
-    # Determine background color based on type
+    # Determine background color and status text based on type and expiry
     if date_type.lower() == "production":
         bg_color = "#f0f0f0"  # Light gray for production dates
         status_text = "PRODUCTION DATE"
     else:
-        bg_color = "#d9f2d9"  # Light green for expiry dates
-        status_text = "EXPIRY DATE"
+        if is_expired:
+            bg_color = "#ffcccc"  # Light red for expired dates
+            status_text = "EXPIRED"
+        else:
+            bg_color = "#d9f2d9"  # Light green for unexpired dates
+            status_text = "VALID UNTIL"
     
     # Display date card
     st.markdown(f"""
@@ -288,6 +305,7 @@ def display_date_card(date_info):
         </div>
         <div style="font-size: 1.2em; margin: 5px 0;">{original_date}</div>
         <div>Standardized: {standardized_date}</div>
+        {f'<div>Days until expiry: {days_until_expiry}</div>' if date_type.lower() != "production" else ''}
     </div>
     """, unsafe_allow_html=True)
 
@@ -327,44 +345,55 @@ def display_results():
         st.session_state.current_image_file = None
         st.session_state.image_processed = False
         st.session_state.analysis_result = None
+        st.session_state.api_error = None
         st.rerun()
 
 # Main app flow
 def main():
-    # Add a debug section at the top
-    with st.expander("Debug Information (click to expand)"):
-        st.write("Current session state:")
+    # Add less intrusive debug section (expandable)
+    with st.expander("Troubleshooting Information"):
+        st.write("App Status:")
         st.write(f"- Image captured: {'Yes' if st.session_state.current_image is not None else 'No'}")
         st.write(f"- Image processed: {'Yes' if st.session_state.image_processed else 'No'}")
         st.write(f"- Analysis results: {'Available' if st.session_state.analysis_result else 'None'}")
+        
+        # API configuration check
+        endpoint = get_secret("azure_endpoint")
+        api_key = get_secret("azure_api_key")
+        model = get_secret("azure_model")
+        
+        st.write("API Configuration:")
+        st.write(f"- Endpoint configured: {'Yes' if endpoint else 'No'}")
+        st.write(f"- API Key configured: {'Yes' if api_key else 'No'}")
+        st.write(f"- Model configured: {'Yes' if model else 'No'}")
         
         if st.button("Reset App"):
             st.session_state.current_image = None
             st.session_state.current_image_file = None
             st.session_state.image_processed = False
             st.session_state.analysis_result = None
+            st.session_state.api_error = None
             st.rerun()
+    
+    # Display API errors if any
+    if st.session_state.api_error:
+        st.error(f"API Error: {st.session_state.api_error}")
     
     # If we have results, show them
     if st.session_state.image_processed and st.session_state.analysis_result:
-        st.write("Debug: Displaying results")
         display_results()
     # Otherwise show image capture interface
     else:
         # If we already have an image, show it and the analyze button
         if st.session_state.current_image is not None:
-            st.write("Debug: Displaying captured image")
             display_current_image()
             
             # Analyze button
             if st.button("Analyze Expiry Date", type="primary", use_container_width=True):
-                st.write("Debug: Analyze button clicked")
                 process_image()
-                st.write("Debug: Processing complete, rerunning app")
                 st.rerun()
         # Otherwise show the camera capture
         else:
-            st.write("Debug: Showing camera capture interface")
             capture_image()
 
 if __name__ == "__main__":
