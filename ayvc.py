@@ -29,6 +29,10 @@ if 'image_processed' not in st.session_state:
     st.session_state.image_processed = False
 if 'api_error' not in st.session_state:
     st.session_state.api_error = None
+if 'raw_api_response' not in st.session_state:
+    st.session_state.raw_api_response = None
+if 'api_request_info' not in st.session_state:
+    st.session_state.api_request_info = None
 
 def get_prompt():
     """Get the prompt for expiry date detection"""
@@ -155,6 +159,12 @@ def analyze_image(image_file):
     """Analyze image using Vision API"""
     # Clear previous errors
     st.session_state.api_error = None
+    st.session_state.raw_api_response = None
+    
+    # Check if the file is too large (API limit is typically 4MB)
+    if hasattr(image_file, 'size') and image_file.size > 4 * 1024 * 1024:
+        st.session_state.api_error = "Image file is too large (>4MB). Please try a smaller image."
+        return None
     
     # Encode image
     base64_image = encode_image_to_base64(image_file)
@@ -212,8 +222,15 @@ def analyze_image(image_file):
     }
     
     try:
+        # Log request information for troubleshooting
+        st.session_state.api_request_info = {
+            "url": api_url,
+            "model": model,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
         # Make the API call with a timeout
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
         
         # Check for HTTP errors
         if response.status_code != 200:
@@ -239,11 +256,36 @@ def analyze_image(image_file):
             
             # Try to parse the content as JSON
             try:
-                parsed_result = json.loads(content)
-                return parsed_result
-            
-            except json.JSONDecodeError as e:
-                st.session_state.api_error = f"Could not parse API response as JSON: {str(e)}"
+                # First, check if the content is empty or whitespace only
+                if not content or content.isspace():
+                    st.session_state.api_error = "API returned an empty response. Please check your API configuration and credits."
+                    return None
+                
+                # Log the raw content for debugging
+                st.session_state.raw_api_response = content[:1000]  # Store first 1000 chars for debugging
+                
+                try:
+                    parsed_result = json.loads(content)
+                    return parsed_result
+                except json.JSONDecodeError as e:
+                    # Try to extract JSON if it's embedded in other text
+                    import re
+                    # This pattern looks for the outermost JSON object
+                    json_pattern = r'(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}])*\}))*\}))*\})'
+                    json_matches = re.search(json_pattern, content, re.DOTALL)
+                    
+                    if json_matches:
+                        try:
+                            extracted_json = json_matches.group(1)
+                            parsed_result = json.loads(extracted_json)
+                            return parsed_result
+                        except Exception as json_ex:
+                            st.session_state.api_error += f"\nJSON extraction failed: {str(json_ex)}"
+                    
+                    st.session_state.api_error = f"Could not parse API response as JSON: {str(e)}"
+                    return None
+            except Exception as e:
+                st.session_state.api_error = f"Error processing API response: {str(e)}"
                 return None
         
         st.session_state.api_error = "Unexpected API response format"
